@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"gin-quickstart/configs"
 	"gin-quickstart/internal/cache"
 	"gin-quickstart/internal/delivery/http"
 	repository "gin-quickstart/internal/repository/SQLite"
@@ -23,9 +24,23 @@ import (
 // @description     Gin CRUD
 // @host            localhost:8080
 // @BasePath        /api/v1
+// @securityDefinitions.apikey  BearerAuth
+// @in                          header
+// @name                        Authorization
+// @description                 Type "Bearer" followed by a space and JWT token.
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("未找到 .env，將使用系統環境變數: %v", err)
+	}
+
+	appCfg, err := configs.LoadConfig("configs/app.yaml")
+	if err != nil {
+		log.Fatalf("無法載入設定檔: %v", err)
+	}
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET 未設定")
 	}
 
 	// 1. 初始化 SQLite 連線
@@ -37,6 +52,7 @@ func main() {
 
 	// 2. 初始化資料層 (切換為 SQLite)
 	repo := repository.NewSqliteRepository(db)
+	userRepo := repository.NewUserRepository(db)
 
 	// 3. 初始化 Redis 快取
 	var cacheStore cache.Cache
@@ -58,14 +74,17 @@ func main() {
 
 	// 4. 初始化業務層
 	svc := service.NewProductService(repo, cacheStore)
+	authSvc := service.NewAuthService(userRepo, jwtSecret, appCfg.JWTExpiry())
 
 	// 5. 初始化 Handler (最上層，注入 Service)
 	handler := &http.ProductHandler{Svc: svc}
+	authHandler := &http.AuthHandler{Auth: authSvc}
 
 	// 6. 設定路由與啟動
 	router := gin.Default()
 	router.Use(http.ErrorHandler())
-	http.RegisterRoutes(router, handler)
+	authMiddleware := http.AuthMiddleware(jwtSecret)
+	http.RegisterRoutes(router, handler, authHandler, authMiddleware)
 
 	router.Run("localhost:8080")
 }

@@ -55,6 +55,7 @@ func (h *ProductHandler) GetByID(c *gin.Context) {
 // @Tags         products
 // @Accept       json
 // @Produce      json
+// @Security     BearerAuth
 // @Param        product  body      domain.Product  true  "Product data"
 // @Success      201      {object}  domain.Product
 // @Failure      400      {object}  domain.AppError
@@ -79,6 +80,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Tags         products
 // @Accept       json
 // @Produce      json
+// @Security     BearerAuth
 // @Param        id       path      int             true  "Product ID"
 // @Param        product  body      domain.Product  true  "Updated product data"
 // @Success      200      {object}  domain.Product
@@ -110,6 +112,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 // @Tags         products
 // @Accept       json
 // @Produce      json
+// @Security     BearerAuth
 // @Param        id  path  int  true  "Product ID"
 // @Success      204
 // @Failure      404  {object}  domain.AppError

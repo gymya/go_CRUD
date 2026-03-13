@@ -16,6 +16,8 @@ func (e *AppError) Error() string {
 var (
 	ErrNotFound     = &AppError{Code: http.StatusNotFound, Message: "資源不存在"}
 	ErrInvalidInput = &AppError{Code: http.StatusUnprocessableEntity, Message: "無效的輸入參數"}
+	ErrConflict     = &AppError{Code: http.StatusConflict, Message: "資源已存在"}
+	ErrUnauthorized = &AppError{Code: http.StatusUnauthorized, Message: "未授權"}
 	ErrInternal     = &AppError{Code: http.StatusInternalServerError, Message: "伺服器內部錯誤"}
 )
 

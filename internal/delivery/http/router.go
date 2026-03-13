@@ -8,22 +8,44 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-// MapRoutes 負責定義所有的網址路徑
-func MapRoutes(r *gin.Engine, h *ProductHandler) {
+// MapProductRoutes 負責定義所有的網址路徑
+func MapProductRoutes(r *gin.Engine, h *ProductHandler, authMiddleware gin.HandlerFunc) {
 	api := r.Group("/api/v1")
 	{
 		p := api.Group("/products")
 		{
 			p.GET("", h.GetAll)
 			p.GET("/:id", h.GetByID)
-			p.POST("", h.Create)
-			p.PUT("/:id", h.Update)
-			p.DELETE("/:id", h.Delete)
+		}
+		auth := api.Group("")
+		auth.Use(authMiddleware)
+		{
+			pp := auth.Group("/products")
+			{
+				pp.POST("", h.Create)
+				pp.PUT("/:id", h.Update)
+				pp.DELETE("/:id", h.Delete)
+			}
 		}
 	}
 }
 
-func RegisterRoutes(r *gin.Engine, h *ProductHandler) {
+// MapAuthRoutes 定義認證相關的路由
+func MapAuthRoutes(r *gin.Engine, authHandler *AuthHandler, authMiddleware gin.HandlerFunc) {
+	api := r.Group("/api/v1")
+	{
+		api.POST("/login", authHandler.Login)
+		auth := api.Group("")
+		auth.Use(authMiddleware)
+		{
+			auth.POST("/users", authHandler.Register)
+		}
+
+	}
+}
+
+func RegisterRoutes(r *gin.Engine, h *ProductHandler, authHandler *AuthHandler, authMiddleware gin.HandlerFunc) {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	MapRoutes(r, h)
+	MapAuthRoutes(r, authHandler, authMiddleware)
+	MapProductRoutes(r, h, authMiddleware)
 }
