@@ -5,11 +5,14 @@ import (
 	"gin-quickstart/configs"
 	"gin-quickstart/internal/cache"
 	"gin-quickstart/internal/delivery/http"
+	"gin-quickstart/internal/events"
+	kafkapub "gin-quickstart/internal/messaging/kafka"
 	repository "gin-quickstart/internal/repository/SQLite"
 	"gin-quickstart/internal/service"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,7 +76,32 @@ func main() {
 	}
 
 	// 4. 初始化業務層
-	svc := service.NewProductService(repo, cacheStore)
+	var stockPublisher events.StockEventPublisher
+	kafkaBrokersRaw := strings.TrimSpace(getEnv("KAFKA_BROKERS", ""))
+	kafkaTopic := getEnv("KAFKA_STOCK_TOPIC", "product.stock.updated")
+	if kafkaBrokersRaw != "" && strings.TrimSpace(kafkaTopic) != "" {
+		kafkaBrokers := strings.Split(kafkaBrokersRaw, ",")
+		producer, err := kafkapub.NewStockProducer(kafkaBrokers, kafkaTopic, "product-service")
+		if err != nil {
+			log.Printf("Kafka producer 初始化失敗，Stock 更新將無法送出: %v", err)
+		} else {
+			stockPublisher = producer
+		}
+
+		consumerGroup := getEnv("KAFKA_CONSUMER_GROUP", "product-stock-consumer")
+		consumer, err := kafkapub.NewStockConsumer(kafkaBrokers, kafkaTopic, consumerGroup, repo, cacheStore)
+		if err != nil {
+			log.Printf("Kafka consumer 初始化失敗，Stock 更新將無法同步到 DB: %v", err)
+		} else {
+			go func() {
+				if err := consumer.Start(context.Background()); err != nil {
+					log.Printf("Kafka consumer 停止: %v", err)
+				}
+			}()
+		}
+	}
+
+	svc := service.NewProductService(repo, cacheStore, stockPublisher)
 	authSvc := service.NewAuthService(userRepo, jwtSecret, appCfg.JWTExpiry())
 
 	// 5. 初始化 Handler (最上層，注入 Service)

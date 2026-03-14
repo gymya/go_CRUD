@@ -338,7 +338,7 @@ func TestProductService_AdjustStock(t *testing.T) {
 	}
 }
 
-func TestProductService_UpdateProduct_StockChangePublishesEvent(t *testing.T) {
+func TestProductService_UpdateProduct_IgnoresStockAndDoesNotPublishEvent(t *testing.T) {
 	repo := new(mockProductRepo)
 	cache := new(mockCache)
 	publisher := new(mockStockPublisher)
@@ -348,11 +348,8 @@ func TestProductService_UpdateProduct_StockChangePublishesEvent(t *testing.T) {
 
 	repo.On("GetByID", 10).Return(existing, nil)
 	repo.On("Update", 10, mock.MatchedBy(func(p domain.Product) bool {
-		return p.Stock == existing.Stock
+		return p.Name == "S" && p.Price == 100 && p.Stock == existing.Stock
 	})).Return(updated, nil)
-	publisher.On("PublishStockUpdate", mock.Anything, mock.MatchedBy(func(e events.StockUpdateEvent) bool {
-		return e.ProductID == 10 && e.Stock == 99 && e.EventType == events.EventTypeProductStockUpdated
-	})).Return(nil)
 	cache.On("Del", mock.Anything, cacheAllProductsKey).Return(nil)
 	cache.On("Del", mock.Anything, productByIDCacheKey(10)).Return(nil)
 
@@ -362,7 +359,7 @@ func TestProductService_UpdateProduct_StockChangePublishesEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, updated, result)
 	repo.AssertExpectations(t)
-	publisher.AssertExpectations(t)
+	publisher.AssertNotCalled(t, "PublishStockUpdate", mock.Anything, mock.Anything)
 	cache.AssertExpectations(t)
 }
 

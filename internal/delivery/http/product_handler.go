@@ -13,6 +13,15 @@ type ProductHandler struct {
 	Svc service.ProductService
 }
 
+type updateProductRequest struct {
+	Name  string  `json:"name" binding:"required"`
+	Price float64 `json:"price" binding:"required,gt=0"`
+}
+
+type adjustStockRequest struct {
+	Stock int `json:"stock" binding:"required,min=0"`
+}
+
 // GetAll doc
 // @Summary      Get all products
 // @Description  Retrieve all products from the database
@@ -75,14 +84,14 @@ func (h *ProductHandler) Create(c *gin.Context) {
 }
 
 // Update godoc
-// @Summary      Update a product
-// @Description  Update an existing product by its ID
+// @Summary      Update a product (name/price only)
+// @Description  Update an existing product by its ID. Stock updates are async via Kafka.
 // @Tags         products
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id       path      int             true  "Product ID"
-// @Param        product  body      domain.Product  true  "Updated product data"
+// @Param        product  body      updateProductRequest  true  "Updated product data"
 // @Success      200      {object}  domain.Product
 // @Failure      400      {object}  domain.AppError
 // @Failure      404      {object}  domain.AppError
@@ -93,17 +102,51 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		c.Error(domain.ErrInvalidInput)
 		return
 	}
-	var p domain.Product
-	if err := c.ShouldBindJSON(&p); err != nil {
+	var req updateProductRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(domain.ErrInvalidInput)
 		return
 	}
-	updatedP, err := h.Svc.UpdateProduct(id, p)
+	updatedP, err := h.Svc.UpdateProduct(id, domain.Product{
+		Name:  req.Name,
+		Price: req.Price,
+	})
 	if err != nil {
 		c.Error(err)
 		return
 	}
 	c.JSON(http.StatusOK, updatedP)
+}
+
+// AdjustStock godoc
+// @Summary      Adjust product stock (async)
+// @Description  Publish a stock adjustment event to Kafka; DB stock is updated by consumers.
+// @Tags         products
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path  int                 true  "Product ID"
+// @Param        payload body  adjustStockRequest  true  "Stock adjustment"
+// @Success      202
+// @Failure      400  {object}  domain.AppError
+// @Failure      404  {object}  domain.AppError
+// @Router       /products/{id}/stock [put]
+func (h *ProductHandler) AdjustStock(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.Error(domain.ErrInvalidInput)
+		return
+	}
+	var req adjustStockRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(domain.ErrInvalidInput)
+		return
+	}
+	if err := h.Svc.AdjustStock(id, req.Stock); err != nil {
+		c.Error(err)
+		return
+	}
+	c.Status(http.StatusAccepted)
 }
 
 // Delete godoc

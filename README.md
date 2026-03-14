@@ -1,6 +1,8 @@
 # Go CRUD Backend Service
 
-本專案為 Go 後端 CRUD 服務，涵蓋使用者驗證、產品與分類管理、快取與一致性錯誤處理等核心功能。突顯架構、可維護性、效能與可擴展性。
+以 Go 開發的後端 CRUD 服務，涵蓋使用者驗證、產品與分類管理、快取策略與資料一致性錯誤處理等核心功能。系統採用 Clean Architecture 原則，確保各層關注點分離，提升可維護性與可測試性。
+
+同時導入 Kafka 作為事件串流平台，將庫存更新以事件方式驅動，支援非同步處理與高併發場景，並提升系統擴展性與整體吞吐量。
 
 ---
 
@@ -22,6 +24,18 @@
 - Go 1.20+
 - Redis
 - SQLite
+- Docker (如需 Kafka)
+
+---
+
+## Kafka (Docker)
+
+本專案提供單節點 Kafka（KRaft）設定，使用 docker-compose.yml。
+
+環境變數（可放在 .env）：
+
+- KAFKA_BROKERS=localhost:9092
+- KAFKA_STOCK_TOPIC=product.stock.updated
 
 ---
 

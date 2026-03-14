@@ -13,8 +13,8 @@ type AuthHandler struct {
 }
 
 type loginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username string `json:"username" binding:"required" example:"admin"`
+	Password string `json:"password" binding:"required" example:"admin"`
 }
 
 type registerRequest struct {

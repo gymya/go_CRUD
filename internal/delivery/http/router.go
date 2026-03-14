@@ -24,6 +24,7 @@ func MapProductRoutes(r *gin.Engine, h *ProductHandler, authMiddleware gin.Handl
 			{
 				pp.POST("", h.Create)
 				pp.PUT("/:id", h.Update)
+				pp.PUT("/:id/stock", h.AdjustStock)
 				pp.DELETE("/:id", h.Delete)
 			}
 		}
