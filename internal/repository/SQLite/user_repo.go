@@ -7,17 +7,17 @@ import (
 	"gorm.io/gorm"
 )
 
-type sqliteUserRepo struct {
+type userRepo struct {
 	db *gorm.DB
 }
 
 // NewUserRepository 初始化並自動建立使用者資料表 (AutoMigrate)
 func NewUserRepository(db *gorm.DB) domain.UserRepository {
 	db.AutoMigrate(&domain.User{})
-	return &sqliteUserRepo{db: db}
+	return &userRepo{db: db}
 }
 
-func (r *sqliteUserRepo) GetByUsername(username string) (*domain.User, error) {
+func (r *userRepo) GetByUsername(username string) (*domain.User, error) {
 	var u domain.User
 	if err := r.db.Where("username = ?", username).First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -28,7 +28,7 @@ func (r *sqliteUserRepo) GetByUsername(username string) (*domain.User, error) {
 	return &u, nil
 }
 
-func (r *sqliteUserRepo) Create(u domain.User) (domain.User, error) {
+func (r *userRepo) Create(u domain.User) (domain.User, error) {
 	if err := r.db.Create(&u).Error; err != nil {
 		return domain.User{}, domain.ErrInternal
 	}
