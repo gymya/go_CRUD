@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gin-quickstart/internal/domain"
+	"gin-quickstart/internal/events"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -75,6 +76,15 @@ func (m *mockCache) Del(ctx context.Context, key string) error {
 	return args.Error(0)
 }
 
+type mockStockPublisher struct {
+	mock.Mock
+}
+
+func (m *mockStockPublisher) PublishStockUpdate(ctx context.Context, event events.StockUpdateEvent) error {
+	args := m.Called(ctx, event)
+	return args.Error(0)
+}
+
 func TestProductService_GetAllProducts_CacheHit(t *testing.T) {
 	repo := new(mockProductRepo)
 	cache := new(mockCache)
@@ -85,7 +95,7 @@ func TestProductService_GetAllProducts_CacheHit(t *testing.T) {
 
 	cache.On("Get", mock.Anything, cacheAllProductsKey).Return(string(payload), nil)
 
-	svc := NewProductService(repo, cache)
+	svc := NewProductService(repo, cache, nil)
 	result := svc.GetAllProducts()
 
 	assert.Equal(t, products, result)
@@ -102,7 +112,7 @@ func TestProductService_GetAllProducts_CacheMiss(t *testing.T) {
 	cache.On("Get", mock.Anything, cacheAllProductsKey).Return("", errors.New("miss"))
 	cache.On("Set", mock.Anything, cacheAllProductsKey, mock.Anything, mock.Anything).Return(nil)
 
-	svc := NewProductService(repo, cache)
+	svc := NewProductService(repo, cache, nil)
 	result := svc.GetAllProducts()
 
 	assert.Equal(t, products, result)
@@ -120,7 +130,7 @@ func TestProductService_GetProduct_CacheHit(t *testing.T) {
 
 	cache.On("Get", mock.Anything, productByIDCacheKey(1)).Return(string(payload), nil)
 
-	svc := NewProductService(repo, cache)
+	svc := NewProductService(repo, cache, nil)
 	result, err := svc.GetProduct(1)
 
 	require.NoError(t, err)
@@ -138,7 +148,7 @@ func TestProductService_GetProduct_CacheMiss(t *testing.T) {
 	cache.On("Get", mock.Anything, productByIDCacheKey(2)).Return("", errors.New("miss"))
 	cache.On("Set", mock.Anything, productByIDCacheKey(2), mock.Anything, mock.Anything).Return(nil)
 
-	svc := NewProductService(repo, cache)
+	svc := NewProductService(repo, cache, nil)
 	result, err := svc.GetProduct(2)
 
 	require.NoError(t, err)
@@ -149,7 +159,7 @@ func TestProductService_GetProduct_CacheMiss(t *testing.T) {
 
 func TestProductService_CreateProduct_InvalidPrice(t *testing.T) {
 	repo := new(mockProductRepo)
-	svc := NewProductService(repo, nil)
+	svc := NewProductService(repo, nil, nil)
 
 	_, err := svc.CreateProduct(domain.Product{Price: 5})
 	require.Error(t, err)
@@ -168,7 +178,7 @@ func TestProductService_CreateProduct_Success(t *testing.T) {
 	cache.On("Del", mock.Anything, cacheAllProductsKey).Return(nil)
 	cache.On("Del", mock.Anything, productByIDCacheKey(created.ID)).Return(nil)
 
-	svc := NewProductService(repo, cache)
+	svc := NewProductService(repo, cache, nil)
 	result, err := svc.CreateProduct(domain.Product{Name: "C", Price: 30, Stock: 3})
 
 	require.NoError(t, err)
@@ -190,21 +200,25 @@ func TestProductService_UpdateProduct(t *testing.T) {
 		{
 			name:  "not found",
 			id:    1,
-			input: domain.Product{Name: "X"},
+			input: domain.Product{Name: "X", Price: 10},
 			setupMocks: func(repo *mockProductRepo, cache *mockCache) {
-				repo.On("Update", 1, mock.Anything).Return((*domain.Product)(nil), domain.ErrNotFound)
+				repo.On("GetByID", 1).Return((*domain.Product)(nil), domain.ErrNotFound)
 			},
 			expectErr:     domain.ErrNotFound,
 			expectResult:  nil,
 			expectCacheOp: false,
 		},
 		{
-			name:  "success",
+			name:  "success without stock change",
 			id:    4,
-			input: domain.Product{Name: "D"},
+			input: domain.Product{Name: "D", Price: 40},
 			setupMocks: func(repo *mockProductRepo, cache *mockCache) {
+				existing := &domain.Product{ID: 4, Name: "D", Price: 40, Stock: 4}
 				updated := &domain.Product{ID: 4, Name: "D", Price: 40, Stock: 4}
-				repo.On("Update", 4, mock.Anything).Return(updated, nil)
+				repo.On("GetByID", 4).Return(existing, nil)
+				repo.On("Update", 4, mock.MatchedBy(func(p domain.Product) bool {
+					return p.Stock == 4 && p.Name == "D" && p.Price == 40
+				})).Return(updated, nil)
 				cache.On("Del", mock.Anything, cacheAllProductsKey).Return(nil)
 				cache.On("Del", mock.Anything, productByIDCacheKey(4)).Return(nil)
 			},
@@ -220,7 +234,7 @@ func TestProductService_UpdateProduct(t *testing.T) {
 			cache := new(mockCache)
 			tt.setupMocks(repo, cache)
 
-			svc := NewProductService(repo, cache)
+			svc := NewProductService(repo, cache, nil)
 			result, err := svc.UpdateProduct(tt.id, tt.input)
 
 			if tt.expectErr != nil {
@@ -237,6 +251,119 @@ func TestProductService_UpdateProduct(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProductService_AdjustStock(t *testing.T) {
+	tests := []struct {
+		name          string
+		id            int
+		stock         int
+		setupMocks    func(repo *mockProductRepo, cache *mockCache, publisher *mockStockPublisher)
+		expectErr     error
+		expectCacheOp bool
+	}{
+		{
+			name:          "invalid stock",
+			id:            1,
+			stock:         -1,
+			setupMocks:    func(repo *mockProductRepo, cache *mockCache, publisher *mockStockPublisher) {},
+			expectErr:     domain.ErrInvalidInput,
+			expectCacheOp: false,
+		},
+		{
+			name:  "not found",
+			id:    2,
+			stock: 3,
+			setupMocks: func(repo *mockProductRepo, cache *mockCache, publisher *mockStockPublisher) {
+				repo.On("GetByID", 2).Return((*domain.Product)(nil), domain.ErrNotFound)
+			},
+			expectErr:     domain.ErrNotFound,
+			expectCacheOp: false,
+		},
+		{
+			name:  "publisher not configured",
+			id:    3,
+			stock: 10,
+			setupMocks: func(repo *mockProductRepo, cache *mockCache, publisher *mockStockPublisher) {
+				repo.On("GetByID", 3).Return(&domain.Product{ID: 3}, nil)
+			},
+			expectErr:     domain.NewError(http.StatusServiceUnavailable, "Kafka producer not configured"),
+			expectCacheOp: false,
+		},
+		{
+			name:  "success",
+			id:    4,
+			stock: 8,
+			setupMocks: func(repo *mockProductRepo, cache *mockCache, publisher *mockStockPublisher) {
+				repo.On("GetByID", 4).Return(&domain.Product{ID: 4}, nil)
+				publisher.On("PublishStockUpdate", mock.Anything, mock.MatchedBy(func(e events.StockUpdateEvent) bool {
+					return e.ProductID == 4 && e.Stock == 8 && e.EventType == events.EventTypeProductStockUpdated
+				})).Return(nil)
+				cache.On("Del", mock.Anything, cacheAllProductsKey).Return(nil)
+				cache.On("Del", mock.Anything, productByIDCacheKey(4)).Return(nil)
+			},
+			expectErr:     nil,
+			expectCacheOp: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := new(mockProductRepo)
+			cache := new(mockCache)
+			publisher := new(mockStockPublisher)
+			tt.setupMocks(repo, cache, publisher)
+
+			var pub events.StockEventPublisher
+			if tt.name != "publisher not configured" {
+				pub = publisher
+			}
+
+			svc := NewProductService(repo, cache, pub)
+			err := svc.AdjustStock(tt.id, tt.stock)
+
+			if tt.expectErr != nil {
+				assert.Error(t, err)
+				cache.AssertNotCalled(t, "Del", mock.Anything, mock.Anything)
+				return
+			}
+
+			require.NoError(t, err)
+			repo.AssertExpectations(t)
+			if tt.expectCacheOp {
+				cache.AssertExpectations(t)
+				publisher.AssertExpectations(t)
+			}
+		})
+	}
+}
+
+func TestProductService_UpdateProduct_StockChangePublishesEvent(t *testing.T) {
+	repo := new(mockProductRepo)
+	cache := new(mockCache)
+	publisher := new(mockStockPublisher)
+
+	existing := &domain.Product{ID: 10, Name: "S", Price: 100, Stock: 5}
+	updated := &domain.Product{ID: 10, Name: "S", Price: 100, Stock: 5}
+
+	repo.On("GetByID", 10).Return(existing, nil)
+	repo.On("Update", 10, mock.MatchedBy(func(p domain.Product) bool {
+		return p.Stock == existing.Stock
+	})).Return(updated, nil)
+	publisher.On("PublishStockUpdate", mock.Anything, mock.MatchedBy(func(e events.StockUpdateEvent) bool {
+		return e.ProductID == 10 && e.Stock == 99 && e.EventType == events.EventTypeProductStockUpdated
+	})).Return(nil)
+	cache.On("Del", mock.Anything, cacheAllProductsKey).Return(nil)
+	cache.On("Del", mock.Anything, productByIDCacheKey(10)).Return(nil)
+
+	svc := NewProductService(repo, cache, publisher)
+	result, err := svc.UpdateProduct(10, domain.Product{Name: "S", Price: 100, Stock: 99})
+
+	require.NoError(t, err)
+	assert.Equal(t, updated, result)
+	repo.AssertExpectations(t)
+	publisher.AssertExpectations(t)
+	cache.AssertExpectations(t)
 }
 
 func TestProductService_DeleteProduct(t *testing.T) {
@@ -275,7 +402,7 @@ func TestProductService_DeleteProduct(t *testing.T) {
 			cache := new(mockCache)
 			tt.setupMocks(repo, cache)
 
-			svc := NewProductService(repo, cache)
+			svc := NewProductService(repo, cache, nil)
 			err := svc.DeleteProduct(tt.id)
 
 			if tt.expectErr != nil {
